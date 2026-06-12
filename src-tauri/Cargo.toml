@@ -1,0 +1,42 @@
+[package]
+name = "duck-calendar"
+version = "0.1.0"
+description = "Desktop calendar widget with local-first memos and optional Google Calendar sync"
+authors = ["duckgeunpark"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+name = "duck_calendar_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+icalendar = "0.16"
+
+# Google OAuth (PKCE, manual flow) + REST
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+keyring = { version = "3", features = ["windows-native"] }
+tiny_http = "0.12"
+url = "2"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+
+[features]
+# This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
