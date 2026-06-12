@@ -64,6 +64,27 @@ pub fn list_memo_dates(
     Ok(dates)
 }
 
+/// All memos whose target_date falls in the given month, for inline calendar display.
+#[tauri::command]
+pub fn list_memos_by_month(
+    state: State<'_, AppState>,
+    year: i32,
+    month: u32,
+) -> Result<Vec<Memo>, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let prefix = format!("{year:04}-{month:02}-%");
+    let sql = format!(
+        "SELECT {COLUMNS} FROM memos WHERE target_date LIKE ?1 ORDER BY target_date, created_at"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let memos = stmt
+        .query_map([prefix], |row| row_to_memo(row))
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<Memo>>>()
+        .map_err(|e| e.to_string())?;
+    Ok(memos)
+}
+
 #[tauri::command]
 pub fn list_memos_by_date(
     state: State<'_, AppState>,

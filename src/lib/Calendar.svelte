@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { listMemoDates } from "./api";
+  import { listMemosByMonth } from "./api";
+  import type { Memo } from "./types";
   import {
     daysInMonth,
     firstWeekday,
@@ -23,26 +24,54 @@
   let viewYear = $state(Number(selectedDate.slice(0, 4)));
   let viewMonth = $state(Number(selectedDate.slice(5, 7)));
 
-  let memoDates = $state<Set<string>>(new Set());
+  let monthMemos = $state<Map<string, Memo[]>>(new Map());
+  let showPicker = $state(false);
+  // Year shown inside the open month picker (independent of viewYear until chosen).
+  let pickerYear = $state(viewYear);
 
-  // Re-fetch the highlighted (has-memo) dates whenever the month or memos change.
+  // Re-fetch this month's memos whenever the month or memos change.
   $effect(() => {
     const y = viewYear;
     const m = viewMonth;
-    // Touch memoVersion so this effect re-runs after memo edits.
     void bus.memoVersion;
-    listMemoDates(y, m)
-      .then((dates) => (memoDates = new Set(dates)))
-      .catch((e) => console.error("listMemoDates failed", e));
+    listMemosByMonth(y, m)
+      .then((list) => {
+        const map = new Map<string, Memo[]>();
+        for (const memo of list) {
+          const arr = map.get(memo.target_date) ?? [];
+          arr.push(memo);
+          map.set(memo.target_date, arr);
+        }
+        monthMemos = map;
+      })
+      .catch((e) => console.error("listMemosByMonth failed", e));
   });
 
-  // Build the cell grid: leading blanks + each day.
+  // Build only the weeks needed for the displayed month, filling leading/trailing
+  // slots with adjacent months' days (shown greyed out).
+  type Cell = { date: string; day: number; inMonth: boolean };
   let cells = $derived.by(() => {
     const lead = firstWeekday(viewYear, viewMonth);
     const total = daysInMonth(viewYear, viewMonth);
-    const out: (number | null)[] = [];
-    for (let i = 0; i < lead; i++) out.push(null);
-    for (let d = 1; d <= total; d++) out.push(d);
+    const pm = viewMonth === 1 ? 12 : viewMonth - 1;
+    const py = viewMonth === 1 ? viewYear - 1 : viewYear;
+    const nm = viewMonth === 12 ? 1 : viewMonth + 1;
+    const ny = viewMonth === 12 ? viewYear + 1 : viewYear;
+    const prevTotal = daysInMonth(py, pm);
+    const out: Cell[] = [];
+    for (let i = lead - 1; i >= 0; i--) {
+      const d = prevTotal - i;
+      out.push({ date: fmt(py, pm, d), day: d, inMonth: false });
+    }
+    for (let d = 1; d <= total; d++) {
+      out.push({ date: fmt(viewYear, viewMonth, d), day: d, inMonth: true });
+    }
+    const targetLength = Math.ceil(out.length / 7) * 7;
+    let nd = 1;
+    while (out.length < targetLength) {
+      out.push({ date: fmt(ny, nm, nd), day: nd, inMonth: false });
+      nd++;
+    }
     return out;
   });
 
@@ -62,24 +91,62 @@
       viewMonth += 1;
     }
   }
-  function goToday() {
+  function openPicker() {
+    pickerYear = viewYear;
+    showPicker = !showPicker;
+  }
+  function pickMonth(m: number) {
+    viewYear = pickerYear;
+    viewMonth = m;
+    showPicker = false;
+  }
+  function stopPickerEvent(event: Event) {
+    event.stopPropagation();
+  }
+  function closePicker(event: MouseEvent) {
+    event.stopPropagation();
+    showPicker = false;
+  }
+  function pickerToday(event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    showPicker = false;
     viewYear = today.y;
     viewMonth = today.m;
     onselect(todayStr);
-  }
-  function dateOf(day: number): string {
-    return fmt(viewYear, viewMonth, day);
   }
 </script>
 
 <section class="calendar">
   <div class="nav">
-    <button class="ghost" onclick={prevMonth} aria-label="이전 달">‹</button>
-    <button class="ghost label" onclick={goToday} title="오늘로 이동">
+    <button class="ghost arrow" onclick={prevMonth} aria-label="이전 달">‹</button>
+    <button class="ghost label" onclick={openPicker} title="월 선택">
       {viewYear}년 {MONTH_LABELS[viewMonth - 1]}
     </button>
-    <button class="ghost" onclick={nextMonth} aria-label="다음 달">›</button>
+    <button class="ghost arrow" onclick={nextMonth} aria-label="다음 달">›</button>
   </div>
+
+  {#if showPicker}
+    <div class="picker-backdrop" role="presentation" onclick={closePicker}></div>
+    <div class="picker" role="dialog" tabindex="-1" onpointerdown={stopPickerEvent}>
+      <div class="picker-year">
+        <button class="ghost" onclick={() => (pickerYear -= 1)} aria-label="이전 해">‹</button>
+        <span>{pickerYear}년</span>
+        <button class="ghost" onclick={() => (pickerYear += 1)} aria-label="다음 해">›</button>
+      </div>
+      <div class="picker-grid">
+        {#each MONTH_LABELS as ml, i}
+          <button
+            class="ghost"
+            class:cur={pickerYear === viewYear && i + 1 === viewMonth}
+            onclick={() => pickMonth(i + 1)}>{ml}</button>
+        {/each}
+      </div>
+      <button class="ghost picker-today" onpointerdown={stopPickerEvent} onclick={pickerToday}>
+        오늘로 이동
+      </button>
+    </div>
+  {/if}
 
   <div class="grid weekdays">
     {#each WEEKDAYS as w, i}
@@ -88,23 +155,26 @@
   </div>
 
   <div class="grid days">
-    {#each cells as day, i}
-      {#if day === null}
-        <div class="cell empty"></div>
-      {:else}
-        {@const ds = dateOf(day)}
-        <button
-          class="cell"
-          class:today={ds === todayStr}
-          class:selected={ds === selectedDate}
-          class:sun={i % 7 === 0}
-          class:sat={i % 7 === 6}
-          onclick={() => onselect(ds)}
-        >
-          <span>{day}</span>
-          {#if memoDates.has(ds)}<i class="dot"></i>{/if}
-        </button>
-      {/if}
+    {#each cells as cell, i}
+      {@const items = cell.inMonth ? (monthMemos.get(cell.date) ?? []) : []}
+      <button
+        class="cell"
+        class:out={!cell.inMonth}
+        class:today={cell.date === todayStr}
+        class:selected={cell.date === selectedDate}
+        onclick={() => onselect(cell.date)}
+        title="클릭하여 그날 보기"
+      >
+        <span class="num" class:sun={i % 7 === 0} class:sat={i % 7 === 6}>{cell.day}</span>
+        {#if items.length}
+          <span class="memos">
+            {#each items.slice(0, 3) as m (m.memo_id)}
+              <span class="m" class:ev={m.is_calendar_event}>{m.title}</span>
+            {/each}
+            {#if items.length > 3}<span class="more">+{items.length - 3}</span>{/if}
+          </span>
+        {/if}
+      </button>
     {/each}
   </div>
 </section>
@@ -112,21 +182,81 @@
 <style>
   .calendar {
     padding: 8px 10px;
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
   }
   .nav {
+    display: grid;
+    grid-template-columns: 32px 1fr 32px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .arrow {
+    font-size: 16px;
+  }
+  .label {
+    font-weight: 600;
+    text-align: center;
+    font-size: 14px;
+  }
+  .picker-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 19;
+  }
+  .picker {
+    position: absolute;
+    z-index: 20;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 34px;
+    width: 236px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  }
+  .picker-year {
     display: flex;
     align-items: center;
     justify-content: space-between;
     margin-bottom: 6px;
-  }
-  .label {
     font-weight: 600;
-    flex: 1;
+  }
+  .picker-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+  }
+  .picker-grid button {
+    padding: 6px 0;
+    font-size: 12px;
+  }
+  .picker-grid button.cur {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+  .picker-today {
+    width: 100%;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted);
   }
   .grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     gap: 2px;
+  }
+  .days {
+    flex: 1;
+    grid-auto-rows: 1fr;
+    min-height: 0;
   }
   .wd {
     text-align: center;
@@ -136,28 +266,53 @@
   }
   .cell {
     position: relative;
-    aspect-ratio: 1 / 1;
+    min-height: 0;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: 1px solid transparent;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 0;
+    padding: 2px 3px;
+    overflow: hidden;
+    text-align: left;
   }
   .cell.empty {
     border: none;
+    background: transparent;
   }
   .cell:hover {
-    background: var(--panel-2);
+    background: rgba(255, 255, 255, 0.09);
   }
   .cell.today {
     border-color: var(--accent);
   }
   .cell.selected {
-    background: var(--accent);
-    color: var(--accent-fg);
-    font-weight: 700;
+    background: var(--panel-2);
+    border-color: var(--accent);
+  }
+  .num {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .cell.today .num {
+    color: var(--accent);
+  }
+  .cell.out {
+    background: transparent;
+    border-color: transparent;
+  }
+  .cell.out .num,
+  .cell.out .num.sun,
+  .cell.out .num.sat {
+    color: var(--muted);
+    opacity: 0.45;
+    font-weight: 400;
+  }
+  .cell.out:hover {
+    background: rgba(255, 255, 255, 0.05);
   }
   .sun {
     color: #ff8a80;
@@ -165,19 +320,31 @@
   .sat {
     color: #82b1ff;
   }
-  .cell.selected.sun,
-  .cell.selected.sat {
-    color: var(--accent-fg);
+  .memos {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    margin-top: 1px;
+    min-height: 0;
   }
-  .dot {
-    position: absolute;
-    bottom: 4px;
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: var(--accent);
+  .m {
+    font-size: 9px;
+    line-height: 1.35;
+    padding: 0 3px;
+    border-radius: 3px;
+    background: var(--panel);
+    color: var(--fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .cell.selected .dot {
-    background: var(--accent-fg);
+  .m.ev {
+    background: #3a3d44;
+    color: var(--accent);
+  }
+  .more {
+    font-size: 9px;
+    color: var(--muted);
+    padding: 0 3px;
   }
 </style>

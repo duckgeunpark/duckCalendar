@@ -15,6 +15,10 @@ export function listMemoDates(year: number, month: number): Promise<string[]> {
   return invoke("list_memo_dates", { year, month });
 }
 
+export function listMemosByMonth(year: number, month: number): Promise<Memo[]> {
+  return invoke("list_memos_by_month", { year, month });
+}
+
 export function listMemosByDate(date: string): Promise<Memo[]> {
   return invoke("list_memos_by_date", { date });
 }
@@ -48,6 +52,24 @@ export function getSetting(key: string): Promise<string | null> {
 
 export function setSetting(key: string, value: string): Promise<void> {
   return invoke("set_setting", { key, value });
+}
+
+export type WindowMode = "normal" | "top" | "desktop";
+
+export function setWindowMode(mode: WindowMode): Promise<void> {
+  return invoke("set_window_mode", { mode });
+}
+
+export function openMemoWindow(date: string): Promise<void> {
+  return invoke("open_memo_window", { date });
+}
+
+export function openSettingsWindow(date: string): Promise<void> {
+  return invoke("open_settings_window", { date });
+}
+
+export function getViewDate(view: string): Promise<string> {
+  return invoke("get_view_date", { view });
 }
 
 // ---- Export ----------------------------------------------------------------

@@ -296,9 +296,13 @@ pub async fn google_disconnect(state: State<'_, AppState>) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn google_status() -> Result<GoogleStatus, String> {
-    Ok(GoogleStatus {
-        configured: OAuthConfig::from_env().is_ok(),
-        connected: load_tokens()?.is_some(),
+pub async fn google_status() -> Result<GoogleStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        Ok(GoogleStatus {
+            configured: OAuthConfig::from_env().is_ok(),
+            connected: load_tokens()?.is_some(),
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }

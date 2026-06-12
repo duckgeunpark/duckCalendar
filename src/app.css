@@ -1,5 +1,7 @@
 :root {
   --bg: #1f2024;
+  --bg-rgb: 31, 32, 36;
+  --app-alpha: 1;
   --panel: #2a2c31;
   --panel-2: #34363c;
   --fg: #e8e8ea;
@@ -23,7 +25,7 @@ html,
 body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
+  background: transparent;
   user-select: none;
   overflow: hidden;
 }
@@ -32,6 +34,7 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  background: rgba(var(--bg-rgb), var(--app-alpha, 1));
 }
 
 button {

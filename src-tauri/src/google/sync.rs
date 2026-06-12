@@ -152,10 +152,12 @@ pub async fn sync_selected(state: State<'_, AppState>) -> Result<SyncSummary, St
         let mut stmt = conn
             .prepare("SELECT memo_id FROM memos WHERE sync_enabled = 1 AND is_calendar_event = 1")
             .map_err(|e| e.to_string())?;
-        stmt.query_map([], |row| row.get::<_, String>(0))
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
             .map_err(|e| e.to_string())?
             .collect::<rusqlite::Result<Vec<String>>>()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        rows
     };
 
     let mut summary = SyncSummary {

@@ -44,7 +44,9 @@
   async function reload() {
     try {
       memos = await listMemosByDate(selectedDate);
-      statusMap = await syncStatusMap();
+      syncStatusMap()
+        .then((map) => (statusMap = map))
+        .catch(() => (statusMap = {}));
     } catch (e) {
       error = String(e);
     }

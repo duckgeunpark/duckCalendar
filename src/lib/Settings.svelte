@@ -1,12 +1,18 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { emit } from "@tauri-apps/api/event";
   import {
     googleStatus,
     googleConnect,
     googleDisconnect,
     syncSelected,
     exportToFile,
+    getSetting,
+    setSetting,
+    setWindowMode,
   } from "./api";
   import type { ExportFormat, ExportScope, GoogleStatus } from "./types";
+  import { ui } from "./store.svelte";
 
   interface Props {
     selectedDate: string; // 'YYYY-MM-DD'
@@ -23,6 +29,61 @@
   $effect(() => {
     refreshStatus();
   });
+
+  // Load current appearance into the shared store for this window.
+  onMount(async () => {
+    const mode = await getSetting("window_mode");
+    if (mode === "top" || mode === "desktop" || mode === "normal") ui.windowMode = mode;
+    const op = await getSetting("opacity");
+    const n = op ? Number(op) : NaN;
+    if (!Number.isNaN(n) && n >= 0.3 && n <= 1) ui.opacity = n;
+    const sc = await getSetting("ui_scale");
+    const s = sc ? Number(sc) : NaN;
+    if (!Number.isNaN(s) && s >= 0.7 && s <= 1.5) ui.scale = s;
+  });
+
+  // Live-preview the font scale in this settings window too.
+  $effect(() => {
+    document.documentElement.style.setProperty("zoom", String(ui.scale));
+  });
+
+  // Tell the main widget to update its appearance live.
+  function broadcastAppearance() {
+    emit("appearance-changed", {
+      windowMode: ui.windowMode,
+      opacity: ui.opacity,
+      scale: ui.scale,
+    });
+  }
+
+  async function applyWindowMode() {
+    try {
+      await setWindowMode(ui.windowMode);
+      broadcastAppearance();
+      message = "창 모드를 변경했습니다.";
+    } catch (e) {
+      message = String(e);
+    }
+  }
+
+  // Apply opacity live to the main window; debounce the DB persist.
+  let opacityTimer: ReturnType<typeof setTimeout> | undefined;
+  function onOpacityInput() {
+    broadcastAppearance();
+    clearTimeout(opacityTimer);
+    opacityTimer = setTimeout(() => {
+      setSetting("opacity", String(ui.opacity)).catch((e) => (message = String(e)));
+    }, 200);
+  }
+
+  let scaleTimer: ReturnType<typeof setTimeout> | undefined;
+  function onScaleInput() {
+    broadcastAppearance();
+    clearTimeout(scaleTimer);
+    scaleTimer = setTimeout(() => {
+      setSetting("ui_scale", String(ui.scale)).catch((e) => (message = String(e)));
+    }, 200);
+  }
 
   async function refreshStatus() {
     try {
@@ -97,6 +158,43 @@
   <div class="head">
     <h3>설정</h3>
     <button class="ghost" onclick={onclose}>닫기 ✕</button>
+  </div>
+
+  <div class="block">
+    <h4>창 모드</h4>
+    <div class="row">
+      <label class="chk"><input type="radio" name="winmode" value="normal" bind:group={ui.windowMode} onchange={applyWindowMode} /> 일반</label>
+      <label class="chk"><input type="radio" name="winmode" value="top" bind:group={ui.windowMode} onchange={applyWindowMode} /> 항상 위</label>
+      <label class="chk"><input type="radio" name="winmode" value="desktop" bind:group={ui.windowMode} onchange={applyWindowMode} /> 바탕화면 고정</label>
+    </div>
+    <p class="hint">
+      '바탕화면 고정'은 다른 창 뒤(바탕화면 레벨)에 머물고, 상단 이름·최소화·닫기 버튼이 숨겨집니다.
+      닫기(✕)를 누르면 종료되지 않고 트레이로 숨겨지며, 완전 종료는 트레이 메뉴의 '종료'로 합니다.
+    </p>
+
+    <h4 class="sub">투명도</h4>
+    <div class="row opacity">
+      <input
+        type="range"
+        min="0.3"
+        max="1"
+        step="0.05"
+        bind:value={ui.opacity}
+        oninput={onOpacityInput} />
+      <span class="opacity-val">{Math.round(ui.opacity * 100)}%</span>
+    </div>
+
+    <h4 class="sub">글자 크기</h4>
+    <div class="row opacity">
+      <input
+        type="range"
+        min="0.8"
+        max="1.4"
+        step="0.05"
+        bind:value={ui.scale}
+        oninput={onScaleInput} />
+      <span class="opacity-val">{Math.round(ui.scale * 100)}%</span>
+    </div>
   </div>
 
   <div class="block">
@@ -182,6 +280,24 @@
     color: var(--muted);
     font-size: 12px;
     margin: 4px 0;
+  }
+  h4.sub {
+    margin-top: 10px;
+  }
+  .opacity {
+    align-items: center;
+  }
+  .opacity input[type="range"] {
+    flex: 1;
+    width: auto;
+    padding: 0;
+    accent-color: var(--accent);
+  }
+  .opacity-val {
+    font-size: 12px;
+    color: var(--muted);
+    min-width: 34px;
+    text-align: right;
   }
   .ok {
     color: #8be29a;
