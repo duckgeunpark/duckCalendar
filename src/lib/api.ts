@@ -1,47 +1,55 @@
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import type {
+  CalendarEvent,
+  Calendar,
   ExportFormat,
   ExportScope,
   GoogleStatus,
-  Memo,
-  NewMemo,
+  NewEvent,
   SyncSummary,
 } from "./types";
 
-// ---- Memos -----------------------------------------------------------------
+// ---- Calendars -------------------------------------------------------------
 
-export function listMemoDates(year: number, month: number): Promise<string[]> {
-  return invoke("list_memo_dates", { year, month });
+export function listCalendars(): Promise<Calendar[]> {
+  return invoke("list_calendars");
 }
 
-export function listMemosByMonth(year: number, month: number): Promise<Memo[]> {
-  return invoke("list_memos_by_month", { year, month });
+export function setCalendarVisible(calendarId: string, visible: boolean): Promise<void> {
+  return invoke("set_calendar_visible", { calendarId, visible });
 }
 
-export function listMemosByDate(date: string): Promise<Memo[]> {
-  return invoke("list_memos_by_date", { date });
+// ---- Events ----------------------------------------------------------------
+
+/** Events overlapping the half-open range [start, end) (both 'YYYY-MM-DD' or RFC3339). */
+export function listEventsByRange(start: string, end: string): Promise<CalendarEvent[]> {
+  return invoke("list_events_by_range", { start, end });
 }
 
-export function createMemo(input: NewMemo): Promise<Memo> {
-  return invoke("create_memo", { input });
+export function createEvent(input: NewEvent): Promise<CalendarEvent> {
+  return invoke("create_event", { input });
 }
 
-export function updateMemo(memo: Memo): Promise<Memo> {
-  return invoke("update_memo", {
+export function updateEvent(ev: CalendarEvent): Promise<CalendarEvent> {
+  return invoke("update_event", {
     input: {
-      memo_id: memo.memo_id,
-      target_date: memo.target_date,
-      title: memo.title,
-      content: memo.content,
-      is_calendar_event: memo.is_calendar_event,
-      sync_enabled: memo.sync_enabled,
+      event_id: ev.event_id,
+      calendar_id: ev.calendar_id,
+      title: ev.title,
+      description: ev.description,
+      location: ev.location,
+      start_at: ev.start_at,
+      end_at: ev.end_at,
+      all_day: ev.all_day,
+      color: ev.color,
+      sync_enabled: ev.sync_enabled,
     },
   });
 }
 
-export function deleteMemo(memoId: string): Promise<void> {
-  return invoke("delete_memo", { memoId });
+export function deleteEvent(eventId: string): Promise<void> {
+  return invoke("delete_event", { eventId });
 }
 
 // ---- Settings --------------------------------------------------------------
@@ -60,16 +68,8 @@ export function setWindowMode(mode: WindowMode): Promise<void> {
   return invoke("set_window_mode", { mode });
 }
 
-export function openMemoWindow(date: string): Promise<void> {
-  return invoke("open_memo_window", { date });
-}
-
-export function openSettingsWindow(date: string): Promise<void> {
-  return invoke("open_settings_window", { date });
-}
-
-export function getViewDate(view: string): Promise<string> {
-  return invoke("get_view_date", { view });
+export function setExpanded(expanded: boolean): Promise<void> {
+  return invoke("set_expanded", { expanded });
 }
 
 // ---- Export ----------------------------------------------------------------

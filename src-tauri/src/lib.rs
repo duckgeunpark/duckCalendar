@@ -1,25 +1,22 @@
 mod db;
+mod event;
 mod export;
 mod google;
 mod memo;
 mod settings;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
-use tauri::{
-    Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder, WindowEvent,
-};
+use tauri::{Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WindowEvent};
 
 /// Shared application state: a single SQLite connection behind a mutex.
 pub struct AppState {
     pub db: Mutex<rusqlite::Connection>,
-}
-
-/// Per-view date handed to child windows (memo/settings) at open time,
-/// fetched by the window on mount via `get_view_date`.
-pub struct ViewState {
-    pub dates: Mutex<std::collections::HashMap<String, String>>,
+    /// True while the window is in the large "expanded" GCal view. While set,
+    /// resize events are not persisted so the compact widget size is preserved.
+    pub expanded: AtomicBool,
 }
 
 fn save_window_setting(handle: &tauri::AppHandle, key: &str, value: i32) {
@@ -81,76 +78,36 @@ fn set_window_mode(handle: tauri::AppHandle, mode: String) -> Result<(), String>
     settings::set(&conn, "window_mode", &mode).map_err(|e| e.to_string())
 }
 
-/// Open (or focus, if already open) a child window loading the SPA with a
-/// `?view=` query so the frontend mounts the right root component.
-fn open_child_window(
-    app: &tauri::AppHandle,
-    label: &str,
-    url: String,
-    title: &str,
-    width: f64,
-    height: f64,
-) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window(label) {
-        let _ = win.show();
-        let _ = win.set_focus();
+/// Toggle the window between the compact widget and the large "expanded" GCal
+/// view. Expanding grows the window to a fixed large size (resize events are
+/// suppressed from persistence); collapsing restores the saved widget size.
+#[tauri::command]
+fn set_expanded(handle: tauri::AppHandle, expanded: bool) -> Result<(), String> {
+    handle.state::<AppState>().expanded.store(expanded, Ordering::SeqCst);
+    let Some(w) = handle.get_webview_window("main") else {
         return Ok(());
-    }
-    WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
-        .title(title)
-        .inner_size(width, height)
-        .min_inner_size(300.0, 360.0)
-        .build()
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// Record the date a child window should display, then (re)open it.
-fn remember_view_date(app: &tauri::AppHandle, view: &str, date: &str) {
-    if let Ok(mut m) = app.state::<ViewState>().dates.lock() {
-        m.insert(view.to_string(), date.to_string());
-    }
-}
-
-/// Open the memo editor window for a given date (reused across dates).
-#[tauri::command]
-fn open_memo_window(app: tauri::AppHandle, date: String) -> Result<(), String> {
-    remember_view_date(&app, "memo", &date);
-    let existed = app.get_webview_window("memo").is_some();
-    open_child_window(&app, "memo", "index.html".into(), "메모", 340.0, 460.0)?;
-    // If it was already open, tell it which date to show now.
-    if existed {
-        if let Some(win) = app.get_webview_window("memo") {
-            let _ = win.emit("memo-date", date);
-        }
+    };
+    if expanded {
+        let _ = w.set_size(LogicalSize::new(960.0, 700.0));
+    } else {
+        // Read the saved compact size, then DROP the db lock before resizing.
+        // `set_size` re-enters the window's Resized handler synchronously on this
+        // thread; if we still held the (non-reentrant) lock, that handler's own
+        // db.lock() would self-deadlock and hang the UI.
+        let (cw, ch) = {
+            let state = handle.state::<AppState>();
+            let conn = state.db.lock().map_err(|e| e.to_string())?;
+            let read = |key: &str| -> Option<u32> {
+                settings::get(&conn, key).ok().flatten().and_then(|v| v.parse().ok())
+            };
+            (
+                read("win_w").filter(|v| *v > 0).unwrap_or(360),
+                read("win_h").filter(|v| *v > 0).unwrap_or(480),
+            )
+        };
+        let _ = w.set_size(PhysicalSize::new(cw, ch));
     }
     Ok(())
-}
-
-/// Open the settings window.
-#[tauri::command]
-fn open_settings_window(app: tauri::AppHandle, date: String) -> Result<(), String> {
-    remember_view_date(&app, "settings", &date);
-    let existed = app.get_webview_window("settings").is_some();
-    open_child_window(&app, "settings", "index.html".into(), "설정", 360.0, 540.0)?;
-    // If it was already open, update date-dependent settings such as export scope.
-    if existed {
-        if let Some(win) = app.get_webview_window("settings") {
-            let _ = win.emit("settings-date", date);
-        }
-    }
-    Ok(())
-}
-
-/// The date a child window should display (set when the window was opened).
-#[tauri::command]
-fn get_view_date(app: tauri::AppHandle, view: String) -> String {
-    app.state::<ViewState>()
-        .dates
-        .lock()
-        .ok()
-        .and_then(|m| m.get(&view).cloned())
-        .unwrap_or_default()
 }
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -177,8 +134,11 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 }
             }
             "settings" => {
-                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-                let _ = open_settings_window(app.clone(), today);
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                    let _ = w.emit("open-settings", ());
+                }
             }
             "quit" => app.exit(0),
             _ => {}
@@ -215,9 +175,7 @@ pub fn run() {
             let conn = db::open(dir.join("duckCalendar.db")).expect("failed to open database");
             app.manage(AppState {
                 db: Mutex::new(conn),
-            });
-            app.manage(ViewState {
-                dates: Mutex::new(std::collections::HashMap::new()),
+                expanded: AtomicBool::new(false),
             });
 
             // Apply the saved window mode (normal | top | desktop).
@@ -250,8 +208,10 @@ pub fn run() {
                         save_window_setting(&handle, "win_y", pos.y);
                     }
                     WindowEvent::Resized(size) => {
-                        save_window_setting(&handle, "win_w", size.width as i32);
-                        save_window_setting(&handle, "win_h", size.height as i32);
+                        if !handle.state::<AppState>().expanded.load(Ordering::SeqCst) {
+                            save_window_setting(&handle, "win_w", size.width as i32);
+                            save_window_setting(&handle, "win_h", size.height as i32);
+                        }
                     }
                     _ => {}
                 });
@@ -261,18 +221,16 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            memo::list_memo_dates,
-            memo::list_memos_by_month,
-            memo::list_memos_by_date,
-            memo::create_memo,
-            memo::update_memo,
-            memo::delete_memo,
+            event::list_calendars,
+            event::set_calendar_visible,
+            event::list_events_by_range,
+            event::create_event,
+            event::update_event,
+            event::delete_event,
             settings::get_setting,
             settings::set_setting,
             set_window_mode,
-            open_memo_window,
-            open_settings_window,
-            get_view_date,
+            set_expanded,
             export::export_data,
             export::export_to_file,
             google::oauth::google_connect,

@@ -209,7 +209,7 @@
       <button onclick={() => doExport("csv")} disabled={busy}>CSV</button>
       <button onclick={() => doExport("ics")} disabled={busy}>ICS</button>
     </div>
-    <p class="hint">ICS에는 '일정으로 지정'된 메모만 포함됩니다.</p>
+    <p class="hint">JSON·CSV는 모든 일정을, ICS는 캘린더 이벤트(VEVENT)로 추출합니다.</p>
   </div>
 
   <div class="block">

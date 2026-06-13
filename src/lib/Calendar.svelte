@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { listMemosByMonth } from "./api";
-  import type { Memo } from "./types";
+  import { listEventsByRange } from "./api";
+  import type { CalendarEvent } from "./types";
   import {
     daysInMonth,
     firstWeekday,
@@ -8,6 +8,9 @@
     todayParts,
     WEEKDAYS,
     MONTH_LABELS,
+    monthRange,
+    addDays,
+    eventStartDate,
   } from "./date";
   import { bus } from "./store.svelte";
 
@@ -24,27 +27,36 @@
   let viewYear = $state(Number(selectedDate.slice(0, 4)));
   let viewMonth = $state(Number(selectedDate.slice(5, 7)));
 
-  let monthMemos = $state<Map<string, Memo[]>>(new Map());
+  let dayEvents = $state<Map<string, CalendarEvent[]>>(new Map());
   let showPicker = $state(false);
   // Year shown inside the open month picker (independent of viewYear until chosen).
   let pickerYear = $state(viewYear);
 
-  // Re-fetch this month's memos whenever the month or memos change.
+  // Re-fetch this month's events whenever the month or data changes. A multi-day
+  // event is placed on every date in its [start, end) span.
   $effect(() => {
     const y = viewYear;
     const m = viewMonth;
     void bus.memoVersion;
-    listMemosByMonth(y, m)
+    const { start, end } = monthRange(y, m);
+    listEventsByRange(start, end)
       .then((list) => {
-        const map = new Map<string, Memo[]>();
-        for (const memo of list) {
-          const arr = map.get(memo.target_date) ?? [];
-          arr.push(memo);
-          map.set(memo.target_date, arr);
+        const map = new Map<string, CalendarEvent[]>();
+        for (const ev of list) {
+          const last = ev.all_day ? addDays(ev.end_at, -1) : eventStartDate(ev.end_at);
+          let d = eventStartDate(ev.start_at);
+          // Guard against pathological ranges; cap at 60 iterations.
+          for (let i = 0; i < 60; i++) {
+            const arr = map.get(d) ?? [];
+            arr.push(ev);
+            map.set(d, arr);
+            if (d >= last) break;
+            d = addDays(d, 1);
+          }
         }
-        monthMemos = map;
+        dayEvents = map;
       })
-      .catch((e) => console.error("listMemosByMonth failed", e));
+      .catch((e) => console.error("listEventsByRange failed", e));
   });
 
   // Build only the weeks needed for the displayed month, filling leading/trailing
@@ -156,7 +168,7 @@
 
   <div class="grid days">
     {#each cells as cell, i}
-      {@const items = cell.inMonth ? (monthMemos.get(cell.date) ?? []) : []}
+      {@const items = cell.inMonth ? (dayEvents.get(cell.date) ?? []) : []}
       <button
         class="cell"
         class:out={!cell.inMonth}
@@ -168,8 +180,10 @@
         <span class="num" class:sun={i % 7 === 0} class:sat={i % 7 === 6}>{cell.day}</span>
         {#if items.length}
           <span class="memos">
-            {#each items.slice(0, 3) as m (m.memo_id)}
-              <span class="m" class:ev={m.is_calendar_event}>{m.title}</span>
+            {#each items.slice(0, 3) as ev (ev.event_id)}
+              <span class="m" class:ev={!ev.all_day} style:--chip={ev.color ?? "var(--accent)"}>
+                {ev.title}
+              </span>
             {/each}
             {#if items.length > 3}<span class="more">+{items.length - 3}</span>{/if}
           </span>
@@ -334,13 +348,13 @@
     border-radius: 3px;
     background: var(--panel);
     color: var(--fg);
+    border-left: 3px solid var(--chip, var(--accent));
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .m.ev {
     background: #3a3d44;
-    color: var(--accent);
   }
   .more {
     font-size: 9px;

@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capabilities for the duckCalendar windows",
-  "windows": ["main", "memo", "settings"],
+  "windows": ["main"],
   "permissions": [
     "core:default",
     "core:event:default",
