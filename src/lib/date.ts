@@ -68,9 +68,3 @@ export function toRfc3339(dateStr: string, hhmm: string): string {
   const om = pad2(Math.abs(off) % 60);
   return `${fmt(d.getFullYear(), d.getMonth() + 1, d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:00${sign}${oh}:${om}`;
 }
-
-export const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
-export const MONTH_LABELS = [
-  "1월", "2월", "3월", "4월", "5월", "6월",
-  "7월", "8월", "9월", "10월", "11월", "12월",
-];

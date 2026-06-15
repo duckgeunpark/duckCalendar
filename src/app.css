@@ -17,6 +17,46 @@
   color: var(--fg);
 }
 
+/* ---- Themes: only color vars change; layout vars stay in :root. -----------
+   Dark is the :root default (data-theme="dark" needs no override). An accent
+   override set in Settings is applied as an inline --accent on <html>. */
+[data-theme="light"] {
+  --bg: #f5f6f8;
+  --bg-rgb: 245, 246, 248;
+  --panel: #ffffff;
+  --panel-2: #e9ebef;
+  --fg: #1f2024;
+  --muted: #6b6e76;
+  --accent: #f5a623;
+  --accent-fg: #2d2d2d;
+  --danger: #d23b34;
+  --border: #d3d6dc;
+}
+[data-theme="navy"] {
+  --bg: #0f1b2d;
+  --bg-rgb: 15, 27, 45;
+  --panel: #16273f;
+  --panel-2: #1e3350;
+  --fg: #e6edf6;
+  --muted: #8aa0bb;
+  --accent: #4dabf7;
+  --accent-fg: #04121f;
+  --danger: #ff6b6b;
+  --border: #243b5a;
+}
+[data-theme="sepia"] {
+  --bg: #efe6d6;
+  --bg-rgb: 239, 230, 214;
+  --panel: #f6efe3;
+  --panel-2: #e7dcc7;
+  --fg: #3a3226;
+  --muted: #7d7259;
+  --accent: #c08a2d;
+  --accent-fg: #fff8ec;
+  --danger: #b3503f;
+  --border: #d8cbb3;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -31,7 +71,9 @@ body {
 }
 
 #app {
-  height: 100vh;
+  /* 100% (not 100vh) so the layout respects the `zoom` font scale; 100vh
+     ignores zoom and overflows the window, clipping the bottom. */
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: rgba(var(--bg-rgb), var(--app-alpha, 1));
@@ -47,7 +89,7 @@ button {
   cursor: pointer;
 }
 button:hover {
-  background: #3f424a;
+  background: color-mix(in srgb, var(--panel-2), var(--fg) 12%);
 }
 button.primary {
   background: var(--accent);

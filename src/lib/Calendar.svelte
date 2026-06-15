@@ -6,13 +6,12 @@
     firstWeekday,
     fmt,
     todayParts,
-    WEEKDAYS,
-    MONTH_LABELS,
     monthRange,
     addDays,
     eventStartDate,
   } from "./date";
   import { bus } from "./store.svelte";
+  import { t, wd, monShort, monthTitle, yearLabel } from "./i18n";
 
   interface Props {
     selectedDate: string;
@@ -119,50 +118,39 @@
     event.stopPropagation();
     showPicker = false;
   }
-  function pickerToday(event: MouseEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-    showPicker = false;
-    viewYear = today.y;
-    viewMonth = today.m;
-    onselect(todayStr);
-  }
 </script>
 
 <section class="calendar">
   <div class="nav">
-    <button class="ghost arrow" onclick={prevMonth} aria-label="이전 달">‹</button>
-    <button class="ghost label" onclick={openPicker} title="월 선택">
-      {viewYear}년 {MONTH_LABELS[viewMonth - 1]}
+    <button class="ghost arrow" onclick={prevMonth} aria-label={t("prevMonth")}>‹</button>
+    <button class="ghost label" onclick={openPicker} title={t("selectMonth")}>
+      {monthTitle(viewYear, viewMonth)}
     </button>
-    <button class="ghost arrow" onclick={nextMonth} aria-label="다음 달">›</button>
+    <button class="ghost arrow" onclick={nextMonth} aria-label={t("nextMonth")}>›</button>
   </div>
 
   {#if showPicker}
     <div class="picker-backdrop" role="presentation" onclick={closePicker}></div>
     <div class="picker" role="dialog" tabindex="-1" onpointerdown={stopPickerEvent}>
       <div class="picker-year">
-        <button class="ghost" onclick={() => (pickerYear -= 1)} aria-label="이전 해">‹</button>
-        <span>{pickerYear}년</span>
-        <button class="ghost" onclick={() => (pickerYear += 1)} aria-label="다음 해">›</button>
+        <button class="ghost" onclick={() => (pickerYear -= 1)} aria-label={t("prevYear")}>‹</button>
+        <span>{yearLabel(pickerYear)}</span>
+        <button class="ghost" onclick={() => (pickerYear += 1)} aria-label={t("nextYear")}>›</button>
       </div>
       <div class="picker-grid">
-        {#each MONTH_LABELS as ml, i}
+        {#each Array(12) as _, i}
           <button
             class="ghost"
             class:cur={pickerYear === viewYear && i + 1 === viewMonth}
-            onclick={() => pickMonth(i + 1)}>{ml}</button>
+            onclick={() => pickMonth(i + 1)}>{monShort(i)}</button>
         {/each}
       </div>
-      <button class="ghost picker-today" onpointerdown={stopPickerEvent} onclick={pickerToday}>
-        오늘로 이동
-      </button>
     </div>
   {/if}
 
   <div class="grid weekdays">
-    {#each WEEKDAYS as w, i}
-      <div class="wd" class:sun={i === 0} class:sat={i === 6}>{w}</div>
+    {#each Array(7) as _, i}
+      <div class="wd" class:sun={i === 0} class:sat={i === 6}>{wd(i)}</div>
     {/each}
   </div>
 
@@ -175,7 +163,7 @@
         class:today={cell.date === todayStr}
         class:selected={cell.date === selectedDate}
         onclick={() => onselect(cell.date)}
-        title="클릭하여 그날 보기"
+        title={t("clickToViewDay")}
       >
         <span class="num" class:sun={i % 7 === 0} class:sat={i % 7 === 6}>{cell.day}</span>
         {#if items.length}
@@ -256,12 +244,6 @@
     border-color: var(--accent);
     font-weight: 700;
   }
-  .picker-today {
-    width: 100%;
-    margin-top: 6px;
-    font-size: 12px;
-    color: var(--muted);
-  }
   .grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
@@ -285,7 +267,7 @@
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
-    background: rgba(255, 255, 255, 0.03);
+    background: color-mix(in srgb, var(--fg) 4%, transparent);
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 2px 3px;
@@ -297,7 +279,7 @@
     background: transparent;
   }
   .cell:hover {
-    background: rgba(255, 255, 255, 0.09);
+    background: color-mix(in srgb, var(--fg) 10%, transparent);
   }
   .cell.today {
     border-color: var(--accent);
@@ -326,7 +308,7 @@
     font-weight: 400;
   }
   .cell.out:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: color-mix(in srgb, var(--fg) 6%, transparent);
   }
   .sun {
     color: #ff8a80;
@@ -342,9 +324,9 @@
     min-height: 0;
   }
   .m {
-    font-size: 9px;
-    line-height: 1.35;
-    padding: 0 3px;
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 1px 3px;
     border-radius: 3px;
     background: var(--panel);
     color: var(--fg);
@@ -354,10 +336,10 @@
     text-overflow: ellipsis;
   }
   .m.ev {
-    background: #3a3d44;
+    background: var(--panel-2);
   }
   .more {
-    font-size: 9px;
+    font-size: 11px;
     color: var(--muted);
     padding: 0 3px;
   }

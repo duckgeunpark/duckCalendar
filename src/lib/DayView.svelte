@@ -2,7 +2,8 @@
   import { listEventsByRange } from "./api";
   import type { CalendarEvent } from "./types";
   import { bus } from "./store.svelte";
-  import { WEEKDAYS, addDays, timeLabel } from "./date";
+  import { addDays, timeLabel } from "./date";
+  import { t, wd } from "./i18n";
 
   interface Props {
     date: string; // 'YYYY-MM-DD'
@@ -22,10 +23,14 @@
       .catch((e) => console.error("listEventsByRange failed", e));
   });
 
-  let weekday = $derived(WEEKDAYS[new Date(date + "T00:00:00").getDay()]);
+  // Same compact label as the week/day time-grid headers: "TUE 6/16".
+  let dayLabel = $derived.by(() => {
+    const dt = new Date(date + "T00:00:00");
+    return `${wd(dt.getDay())} ${dt.getMonth() + 1}/${dt.getDate()}`;
+  });
 
   function timeText(ev: CalendarEvent): string {
-    if (ev.all_day) return "종일";
+    if (ev.all_day) return t("allDayBadge");
     const s = timeLabel(ev.start_at);
     const e = timeLabel(ev.end_at);
     return e ? `${s}–${e}` : s;
@@ -34,14 +39,14 @@
 
 <section class="day">
   <div class="day-head">
-    <strong>{date} ({weekday})</strong>
-    <button class="ghost back" onclick={onback} title="월별 보기 (우클릭으로도 가능)">월별 ▦</button>
+    <strong>{dayLabel}</strong>
+    <button class="ghost back" onclick={onback} title={t("monthViewTitle")}>{t("monthViewBtn")}</button>
   </div>
 
-  <button class="primary add" onclick={onnew}>＋ 새 일정</button>
+  <button class="primary add" onclick={onnew}>{t("addEvent")}</button>
 
   {#if events.length === 0}
-    <p class="muted">일정이 없습니다. 위 버튼으로 추가하세요.</p>
+    <p class="muted">{t("noEvents")}</p>
   {:else}
     <ul class="list">
       {#each events as ev (ev.event_id)}
@@ -117,7 +122,7 @@
   }
   .item .t {
     font-weight: 600;
-    font-size: 13px;
+    font-size: 15px;
   }
   .item .c {
     font-size: 12px;

@@ -7,15 +7,16 @@
   import EventEditor from "./lib/EventEditor.svelte";
   import Settings from "./lib/Settings.svelte";
   import { todayParts, fmt, weekDates } from "./lib/date";
+  import { t } from "./lib/i18n";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { getSetting, setExpanded } from "./lib/api";
   import { ui, bumpMemos } from "./lib/store.svelte";
   import type { CalendarEvent } from "./lib/types";
 
-  const t = todayParts();
-  let selectedDate = $state(fmt(t.y, t.m, t.d));
+  const tp = todayParts();
+  const todayStr = fmt(tp.y, tp.m, tp.d);
+  let selectedDate = $state(todayStr);
   let view = $state<"month" | "week" | "day">("month");
-  let expanded = $state(false);
   let showSettings = $state(false);
 
   // Editor overlay shared by all views. undefined = closed, null = new event,
@@ -35,6 +36,12 @@
       const sc = await getSetting("ui_scale");
       const s = sc ? Number(sc) : NaN;
       if (!Number.isNaN(s) && s >= 0.7 && s <= 1.5) ui.scale = s;
+      const th = await getSetting("theme");
+      if (th === "dark" || th === "light" || th === "navy" || th === "sepia") ui.theme = th;
+      const ac = await getSetting("accent");
+      if (ac) ui.accent = ac;
+      const lg = await getSetting("lang");
+      if (lg === "ko" || lg === "en") ui.lang = lg;
     })();
 
     const unMemo = listen("memos-changed", () => bumpMemos());
@@ -52,6 +59,15 @@
   $effect(() => {
     document.documentElement.style.setProperty("zoom", String(ui.scale));
   });
+  // Apply the color theme and optional accent override.
+  $effect(() => {
+    document.documentElement.setAttribute("data-theme", ui.theme);
+  });
+  $effect(() => {
+    const root = document.documentElement;
+    if (ui.accent) root.style.setProperty("--accent", ui.accent);
+    else root.style.removeProperty("--accent");
+  });
 
   let weekCols = $derived(weekDates(selectedDate));
 
@@ -59,17 +75,32 @@
     selectedDate = date;
     view = "day";
   }
+  // Bumped on "go to today" to remount the month Calendar so it resets its
+  // internally-tracked displayed month back to today's month.
+  let monthEpoch = $state(0);
+  function goToday() {
+    selectedDate = todayStr;
+    view = "month";
+    monthEpoch++;
+  }
   function backToMonth(e: MouseEvent) {
     e.preventDefault();
-    if (editing !== undefined) closeEditor();
+    if (showSettings) showSettings = false;
+    else if (editing !== undefined) closeEditor();
+    else if (view === "month") goToday(); // 월 달력에서 우클릭 → 오늘로 이동
     else view = "month";
   }
 
+  // The compact "간략보기" widget can't reach the week view, so drop back to
+  // month whenever we collapse (from the titlebar button or from Settings).
+  $effect(() => {
+    if (!ui.expanded && view === "week") view = "month";
+  });
+
   async function toggleExpanded() {
-    expanded = !expanded;
-    if (!expanded && view === "week") view = "month";
+    ui.expanded = !ui.expanded;
     try {
-      await setExpanded(expanded);
+      await setExpanded(ui.expanded);
     } catch (e) {
       console.error("setExpanded failed", e);
     }
@@ -92,32 +123,32 @@
 <header class="titlebar" class:widget={ui.windowMode === "desktop"} data-tauri-drag-region>
   <span class="title" data-tauri-drag-region>duckCalendar</span>
   <div class="win-actions">
-    <button class="ghost btn-expand" title={expanded ? "축소" : "확장"} onclick={toggleExpanded}>
-      {expanded ? "⊟" : "⊞"}
+    <button class="ghost btn-expand" title={ui.expanded ? t("expandCompact") : t("expandDetailed")} onclick={toggleExpanded}>
+      {ui.expanded ? "⊟" : "⊞"}
     </button>
-    <button class="ghost btn-settings" title="설정" onclick={() => (showSettings = !showSettings)}>⚙</button>
-    <button class="ghost btn-min" title="숨기기" onclick={() => appWindow.hide()}>—</button>
-    <button class="ghost btn-close" title="닫기" onclick={() => appWindow.close()}>✕</button>
+    <button class="ghost btn-settings" title={t("settings")} onclick={() => (showSettings = !showSettings)}>⚙</button>
+    <button class="ghost btn-min" title={t("hide")} onclick={() => appWindow.hide()}>—</button>
+    <button class="ghost btn-close" title={t("close")} onclick={() => appWindow.close()}>✕</button>
   </div>
 </header>
 
-{#if expanded && !showSettings}
+{#if ui.expanded && !showSettings}
   <nav class="viewbar">
-    <button class="ghost" class:active={view === "month"} onclick={() => (view = "month")}>월</button>
-    <button class="ghost" class:active={view === "week"} onclick={() => (view = "week")}>주</button>
-    <button class="ghost" class:active={view === "day"} onclick={() => (view = "day")}>일</button>
-    <span class="sel">{selectedDate}</span>
+    <button class="ghost" class:active={view === "month"} onclick={() => (view = "month")}>{t("viewMonth")}</button>
+    <button class="ghost" class:active={view === "week"} onclick={() => (view = "week")}>{t("viewWeek")}</button>
+    <button class="ghost" class:active={view === "day"} onclick={() => (view = "day")}>{t("viewDay")}</button>
+    <button class="ghost sel" onclick={goToday} title={t("goToday")}>{todayStr}</button>
   </nav>
 {/if}
 
 <main oncontextmenu={backToMonth}>
   {#if showSettings}
-    <Settings selectedDate={selectedDate} onclose={() => (showSettings = false)} />
+    <Settings selectedDate={selectedDate} />
   {:else if editing !== undefined}
     <EventEditor date={selectedDate} event={editing} initial={editorInitial} onclose={closeEditor} />
   {:else if view === "week"}
     <TimeGrid dates={weekCols} onedit={openEdit} onnew={openNew} />
-  {:else if view === "day" && expanded}
+  {:else if view === "day" && ui.expanded}
     <TimeGrid dates={[selectedDate]} onedit={openEdit} onnew={openNew} />
   {:else if view === "day"}
     <DayView
@@ -127,7 +158,9 @@
       onnew={() => openNew()}
     />
   {:else}
-    <Calendar {selectedDate} onselect={selectDay} />
+    {#key monthEpoch}
+      <Calendar {selectedDate} onselect={selectDay} />
+    {/key}
   {/if}
 </main>
 

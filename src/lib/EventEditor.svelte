@@ -3,6 +3,7 @@
   import type { CalendarEvent, Calendar } from "./types";
   import { bumpMemos } from "./store.svelte";
   import { addDays, eventStartDate, timeLabel, toRfc3339, pad2 } from "./date";
+  import { t } from "./i18n";
 
   interface Props {
     date: string; // 'YYYY-MM-DD' of the day being viewed
@@ -18,6 +19,8 @@
   let title = $state(event?.title ?? "");
   let description = $state(event?.description ?? "");
   let location = $state(event?.location ?? "");
+  // 위치 입력칸 표시 여부. 기본은 끔(위치 지정 안 함); 기존 위치가 있으면 켜둔다.
+  let showLocation = $state(!!event?.location);
   // Creating from a time slot starts as a timed event; otherwise default all-day.
   let allDay = $state(event ? event.all_day : initial?.hour === undefined);
   let day = $state(event ? eventStartDate(event.start_at) : (initial?.day ?? date));
@@ -58,7 +61,7 @@
     const start_at = toRfc3339(day, startTime);
     const end_at = toRfc3339(day, endTime);
     if (end_at <= start_at) {
-      error = "종료 시각이 시작 시각보다 늦어야 합니다.";
+      error = t("errEndAfterStart");
       return null;
     }
     return { start_at, end_at };
@@ -66,7 +69,7 @@
 
   async function save() {
     if (!title.trim()) {
-      error = "제목을 입력하세요.";
+      error = t("errTitleRequired");
       return;
     }
     const range = buildRange();
@@ -80,7 +83,7 @@
           calendar_id: calendarId || event.calendar_id,
           title: title.trim(),
           description,
-          location,
+          location: showLocation ? location : "",
           all_day: allDay,
           ...range,
         });
@@ -89,7 +92,7 @@
           calendar_id: calendarId || undefined,
           title: title.trim(),
           description,
-          location,
+          location: showLocation ? location : "",
           all_day: allDay,
           sync_enabled: false,
           ...range,
@@ -122,44 +125,54 @@
 
 <section class="editor">
   <div class="head">
-    <button class="ghost back" onclick={() => onclose(false)} title="목록으로">‹ 목록</button>
-    <strong>{event ? "일정 편집" : "새 일정"}</strong>
+    <div class="head-left">
+      <button class="ghost back" onclick={() => onclose(false)} title={t("backListTitle")}>{t("backList")}</button>
+      <strong>{event ? t("editEvent") : t("newEvent")}</strong>
+    </div>
+    <input class="head-date" type="date" bind:value={day} />
+    <div class="head-actions">
+      <button class="primary" onclick={save} disabled={busy}>{t("save")}</button>
+      <button class="ghost" onclick={() => onclose(false)} disabled={busy}>{t("cancel")}</button>
+      {#if event}
+        <button class="ghost danger" onclick={remove} disabled={busy} title={t("delete")}>✕</button>
+      {/if}
+    </div>
   </div>
 
-  <input placeholder="제목" bind:value={title} />
+  <div class="body">
+    <input class="title-in" placeholder={t("titlePh")} bind:value={title} />
 
-  <label class="chk">
-    <input type="checkbox" bind:checked={allDay} /> 종일
-  </label>
+    <div class="row">
+      <label class="chk">
+        <input type="checkbox" bind:checked={allDay} /> {t("allDay")}
+      </label>
+      <label class="chk">
+        <input type="checkbox" bind:checked={showLocation} /> {t("location")}
+      </label>
+    </div>
 
-  <div class="row">
-    <input type="date" bind:value={day} />
     {#if !allDay}
-      <input type="time" bind:value={startTime} />
-      <span class="dash">~</span>
-      <input type="time" bind:value={endTime} />
+      <div class="row">
+        <input type="time" bind:value={startTime} />
+        <span class="dash">~</span>
+        <input type="time" bind:value={endTime} />
+      </div>
     {/if}
-  </div>
 
-  {#if calendars.length > 1}
-    <select bind:value={calendarId}>
-      {#each calendars as c (c.calendar_id)}
-        <option value={c.calendar_id}>{c.name}</option>
-      {/each}
-    </select>
-  {/if}
-
-  <input placeholder="위치 (선택)" bind:value={location} />
-  <textarea placeholder="설명 (선택)" bind:value={description}></textarea>
-
-  {#if error}<p class="err">{error}</p>{/if}
-
-  <div class="actions">
-    <button class="primary" onclick={save} disabled={busy}>저장</button>
-    <button class="ghost" onclick={() => onclose(false)} disabled={busy}>취소</button>
-    {#if event}
-      <button class="ghost danger" onclick={remove} disabled={busy} title="삭제">🗑 삭제</button>
+    {#if calendars.length > 1}
+      <select bind:value={calendarId}>
+        {#each calendars as c (c.calendar_id)}
+          <option value={c.calendar_id}>{c.name}</option>
+        {/each}
+      </select>
     {/if}
+
+    {#if showLocation}
+      <input placeholder={t("locationPh")} bind:value={location} />
+    {/if}
+    <textarea placeholder={t("descPh")} bind:value={description}></textarea>
+
+    {#if error}<p class="err">{error}</p>{/if}
   </div>
 </section>
 
@@ -171,20 +184,54 @@
     min-height: 0;
     padding: 8px 10px;
     gap: 6px;
-    overflow-y: auto;
+    overflow: hidden;
   }
+  /* Pinned single-row header: 목록·제목(좌) · 날짜(중앙) · 저장/취소/삭제(우). */
   .head {
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 8px;
+  }
+  .head-left {
+    justify-self: start;
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
+  }
+  .head-date {
+    justify-self: center;
+    width: auto;
+  }
+  .head-actions {
+    justify-self: end;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .head-actions button {
+    padding: 4px 8px;
+  }
+  /* Scrollable field area; grows to fill the space freed by moving the buttons up. */
+  .body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
   .head strong {
     color: var(--accent);
     font-size: 13px;
+    white-space: nowrap;
   }
   .back {
     font-size: 12px;
     color: var(--muted);
+    white-space: nowrap;
   }
   .row {
     display: flex;
@@ -192,13 +239,16 @@
     gap: 6px;
     flex-wrap: wrap;
   }
-  .row input[type="date"],
   .row input[type="time"] {
     width: auto;
     flex: 0 0 auto;
   }
   .dash {
     color: var(--muted);
+  }
+  .title-in {
+    font-weight: 600;
+    font-size: 15px;
   }
   textarea {
     min-height: 80px;
@@ -222,16 +272,11 @@
     border-radius: var(--radius);
     padding: 6px 8px;
   }
-  .actions {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
   .danger {
-    color: #f0a0a0;
+    color: var(--danger);
   }
   .err {
-    color: #f0a0a0;
+    color: var(--danger);
     margin: 0;
     font-size: 12px;
     word-break: break-word;

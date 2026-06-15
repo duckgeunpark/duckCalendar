@@ -6,8 +6,20 @@ use chrono::Utc;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::RwLock;
 use std::time::Duration;
 use tauri::{AppHandle, State};
+
+/// Client ID set from the UI/DB at runtime. Takes precedence over the
+/// GOOGLE_CLIENT_ID environment variable when present.
+static CLIENT_ID: RwLock<Option<String>> = RwLock::new(None);
+
+/// Set (or clear, when empty) the in-memory OAuth client ID. Loaded from the
+/// DB at startup and updated whenever the user saves it in Settings.
+pub fn set_runtime_client_id(id: &str) {
+    let id = id.trim();
+    *CLIENT_ID.write().unwrap() = (!id.is_empty()).then(|| id.to_string());
+}
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
@@ -34,12 +46,18 @@ pub struct OAuthConfig {
 
 impl OAuthConfig {
     pub fn from_env() -> Result<Self, String> {
-        let client_id = std::env::var("GOOGLE_CLIENT_ID")
+        // Prefer the runtime client ID (saved in Settings), fall back to env.
+        let client_id = CLIENT_ID
+            .read()
             .ok()
-            .filter(|s| !s.trim().is_empty())
+            .and_then(|g| g.clone())
+            .or_else(|| {
+                std::env::var("GOOGLE_CLIENT_ID")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+            })
             .ok_or_else(|| {
-                "GOOGLE_CLIENT_ID 환경변수가 설정되지 않았습니다. README의 연동 설정을 참고하세요."
-                    .to_string()
+                "Google 클라이언트 ID가 설정되지 않았습니다. 설정 화면에서 입력하세요.".to_string()
             })?;
         let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
             .ok()
@@ -292,6 +310,20 @@ pub async fn google_disconnect(state: State<'_, AppState>) -> Result<(), String>
     delete_tokens()?;
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     settings::set(&conn, "google_connected", "false").map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Persist the OAuth client ID locally and apply it to the running app.
+#[tauri::command]
+pub async fn set_google_client_id(
+    state: State<'_, AppState>,
+    client_id: String,
+) -> Result<(), String> {
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        settings::set(&conn, "google_client_id", client_id.trim()).map_err(|e| e.to_string())?;
+    }
+    set_runtime_client_id(&client_id);
     Ok(())
 }
 

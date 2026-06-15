@@ -190,6 +190,19 @@ pub fn run() {
             };
             apply_window_mode(app.handle(), &mode);
 
+            // Load the saved Google OAuth client ID into the OAuth module.
+            {
+                let state = app.state::<AppState>();
+                if let Some(id) = state
+                    .db
+                    .lock()
+                    .ok()
+                    .and_then(|conn| settings::get(&conn, "google_client_id").ok().flatten())
+                {
+                    google::oauth::set_runtime_client_id(&id);
+                }
+            }
+
             // Restore the widget window position/size and persist future changes.
             if let Some(window) = app.get_webview_window("main") {
                 restore_window(app.handle(), &window);
@@ -236,6 +249,7 @@ pub fn run() {
             google::oauth::google_connect,
             google::oauth::google_disconnect,
             google::oauth::google_status,
+            google::oauth::set_google_client_id,
             google::sync::sync_memo,
             google::sync::sync_selected,
             google::sync::sync_status_map,

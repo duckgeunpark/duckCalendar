@@ -105,6 +105,10 @@ export function googleConnect(): Promise<void> {
   return invoke("google_connect");
 }
 
+export function setGoogleClientId(clientId: string): Promise<void> {
+  return invoke("set_google_client_id", { clientId });
+}
+
 export function googleDisconnect(): Promise<void> {
   return invoke("google_disconnect");
 }

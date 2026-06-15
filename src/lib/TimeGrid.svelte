@@ -2,7 +2,8 @@
   import { listEventsByRange } from "./api";
   import type { CalendarEvent } from "./types";
   import { bus } from "./store.svelte";
-  import { WEEKDAYS, addDays, eventStartDate, timeLabel, pad2 } from "./date";
+  import { addDays, eventStartDate, timeLabel, pad2 } from "./date";
+  import { t, wd } from "./i18n";
 
   interface Props {
     dates: string[]; // column dates 'YYYY-MM-DD' (1 = day view, 7 = week view)
@@ -56,15 +57,26 @@
     });
   }
 
-  function slotClick(d: string, e: MouseEvent) {
+  // Hour slot currently under the cursor, for the hover indicator.
+  let hover = $state<{ day: string; hour: number } | null>(null);
+
+  function hourAt(e: MouseEvent): number {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const hour = Math.floor((e.clientY - rect.top) / HOUR);
-    onnew(d, Math.min(Math.max(hour, 0), 23));
+    return Math.min(Math.max(hour, 0), 23);
+  }
+
+  function slotClick(d: string, e: MouseEvent) {
+    onnew(d, hourAt(e));
+  }
+
+  function slotMove(d: string, e: MouseEvent) {
+    hover = { day: d, hour: hourAt(e) };
   }
 
   function colLabel(d: string): string {
     const dt = new Date(d + "T00:00:00");
-    return `${WEEKDAYS[dt.getDay()]} ${dt.getDate()}`;
+    return `${wd(dt.getDay())} ${dt.getMonth() + 1}/${dt.getDate()}`;
   }
 </script>
 
@@ -79,14 +91,23 @@
 
   <!-- All-day strip -->
   <div class="allday">
-    <div class="gutter mini">종일</div>
+    <div class="gutter mini">{t("allDayBadge")}</div>
     {#each dates as d (d)}
-      <div class="allday-col">
+      <div
+        class="allday-col"
+        role="button"
+        tabindex="-1"
+        title={t("addAllDay")}
+        onclick={() => onnew(d)}
+      >
         {#each allDayFor(d) as ev (ev.event_id)}
           <button
             class="chip"
             style:--chip={ev.color ?? "var(--accent)"}
-            onclick={() => onedit(ev)}
+            onclick={(e) => {
+              e.stopPropagation();
+              onedit(ev);
+            }}
             title={ev.title}>{ev.title}</button>
         {/each}
       </div>
@@ -107,10 +128,15 @@
         role="button"
         tabindex="-1"
         onclick={(e) => slotClick(d, e)}
+        onmousemove={(e) => slotMove(d, e)}
+        onmouseleave={() => (hover = null)}
       >
         {#each hours as h (h)}
           <div class="line" style:top={`${h * HOUR}px`}></div>
         {/each}
+        {#if hover && hover.day === d}
+          <div class="hover" style:top={`${hover.hour * HOUR}px`} style:height={`${HOUR}px`}></div>
+        {/if}
         {#each blocksFor(d) as b (b.ev.event_id)}
           <button
             class="block"
@@ -144,6 +170,17 @@
     display: flex;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    /* Reserve the same scrollbar gutter as .body so columns stay aligned. */
+    overflow-y: hidden;
+    scrollbar-gutter: stable;
+  }
+  /* Give the all-day strip the height of one hour row. */
+  .allday {
+    min-height: 40px;
+  }
+  .allday-col {
+    overflow-y: auto;
+    cursor: pointer;
   }
   .gutter {
     width: 46px;
@@ -185,11 +222,17 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    /* Fill the all-day cell so a single chip matches the 1-hour row height. */
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    align-items: center;
   }
   .body {
     flex: 1;
     display: flex;
     overflow-y: auto;
+    scrollbar-gutter: stable;
     min-height: 0;
   }
   .gutter.hours {
@@ -202,12 +245,16 @@
     text-align: right;
     padding-right: 4px;
     box-sizing: border-box;
+    /* Never let the flex column compress the rows below 40px, or the hour
+       labels drift out of step with the 40px-per-hour grid lines and blocks. */
+    flex-shrink: 0;
   }
   .col {
     flex: 1;
     position: relative;
     border-left: 1px solid var(--border);
     min-width: 0;
+    cursor: pointer;
   }
   .line {
     position: absolute;
@@ -215,6 +262,15 @@
     right: 0;
     border-top: 1px solid var(--border);
     opacity: 0.4;
+  }
+  .hover {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border: 1px dashed var(--accent);
+    box-sizing: border-box;
+    pointer-events: none;
   }
   .block {
     position: absolute;
@@ -232,7 +288,7 @@
     color: var(--fg);
   }
   .bt {
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
