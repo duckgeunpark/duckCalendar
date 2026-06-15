@@ -158,6 +158,8 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             "quit" => app.exit(0),
             _ => {}
         })
+        // Right-click opens the menu; a single left-click does nothing.
+        .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
             // Only a double-click (left button) of the tray icon summons it.
             if let TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } = event {
@@ -166,6 +168,54 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         })
         .build(app)?;
     Ok(())
+}
+
+/// Watch the SQLite database (and its WAL/journal sidecar files) for external
+/// edits and notify the frontend to re-fetch. Bursts of write events are
+/// coalesced into a single `db-changed` emit after a short quiet period.
+fn start_db_watcher(handle: tauri::AppHandle, db_path: std::path::PathBuf) {
+    use notify::{RecursiveMode, Watcher};
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    let Some(dir) = db_path.parent().map(|p| p.to_path_buf()) else {
+        return;
+    };
+
+    std::thread::spawn(move || {
+        let (tx, rx) = channel::<()>();
+        let mut watcher = match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(event) = res {
+                // Only react to the database files, not the sibling DB_SCHEMA.md.
+                let relevant = event.paths.iter().any(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n.starts_with("duckCalendar.db"))
+                        .unwrap_or(false)
+                });
+                if relevant {
+                    let _ = tx.send(());
+                }
+            }
+        }) {
+            Ok(w) => w,
+            Err(_) => return,
+        };
+        // Watch the directory so WAL/journal files (which may be recreated) are
+        // covered even though they aren't present at startup.
+        if watcher.watch(&dir, RecursiveMode::NonRecursive).is_err() {
+            return;
+        }
+        loop {
+            // Block until the first change, then drain follow-up events within
+            // the debounce window so one save burst yields one refresh.
+            if rx.recv().is_err() {
+                break;
+            }
+            while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
+            let _ = handle.emit("db-changed", ());
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -191,11 +241,15 @@ pub fn run() {
                 dir.join("DB_SCHEMA.md"),
                 include_str!("../resources/DB_SCHEMA.md"),
             );
-            let conn = db::open(dir.join("duckCalendar.db")).expect("failed to open database");
+            let db_path = dir.join("duckCalendar.db");
+            let conn = db::open(&db_path).expect("failed to open database");
             app.manage(AppState {
                 db: Mutex::new(conn),
                 expanded: AtomicBool::new(false),
             });
+
+            // Auto-refresh the UI when the DB is edited by an external tool.
+            start_db_watcher(app.handle().clone(), db_path);
 
             // Apply the saved window mode (normal | top | desktop).
             let mode = {

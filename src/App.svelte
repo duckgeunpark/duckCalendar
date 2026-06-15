@@ -45,6 +45,9 @@
     })();
 
     const unMemo = listen("memos-changed", () => bumpMemos());
+    // External edits to the SQLite file (e.g. an AI tool writing the DB) emit
+    // this from the backend file watcher; re-fetch the visible views.
+    const unDb = listen("db-changed", () => bumpMemos());
     const unSettings = listen("open-settings", () => (showSettings = true));
     // Tray "보이기"/close toggle the window mode from the backend; mirror it so
     // the titlebar chrome (hidden in desktop mode) updates accordingly.
@@ -54,6 +57,7 @@
     });
     return () => {
       unMemo.then((f) => f());
+      unDb.then((f) => f());
       unSettings.then((f) => f());
       unMode.then((f) => f());
     };
