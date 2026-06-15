@@ -46,9 +46,16 @@
 
     const unMemo = listen("memos-changed", () => bumpMemos());
     const unSettings = listen("open-settings", () => (showSettings = true));
+    // Tray "보이기"/close toggle the window mode from the backend; mirror it so
+    // the titlebar chrome (hidden in desktop mode) updates accordingly.
+    const unMode = listen<string>("window-mode", (e) => {
+      const m = e.payload;
+      if (m === "normal" || m === "top" || m === "desktop") ui.windowMode = m;
+    });
     return () => {
       unMemo.then((f) => f());
       unSettings.then((f) => f());
+      unMode.then((f) => f());
     };
   });
 

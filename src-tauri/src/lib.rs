@@ -69,6 +69,27 @@ fn apply_window_mode(handle: &tauri::AppHandle, mode: &str) {
     }
 }
 
+/// Apply a window mode, persist it, and notify the frontend so the titlebar
+/// chrome (hidden in 'desktop' mode) updates to match a tray/close-driven change.
+fn set_window_mode_internal(handle: &tauri::AppHandle, mode: &str) {
+    apply_window_mode(handle, mode);
+    if let Ok(conn) = handle.state::<AppState>().db.lock() {
+        let _ = settings::set(&conn, "window_mode", mode);
+    }
+    let _ = handle.emit("window-mode", mode);
+}
+
+/// Bring the widget to the foreground as an interactive (normal) window.
+/// Used by the tray "보이기"/icon click and by a second app launch.
+fn summon_window(handle: &tauri::AppHandle) {
+    set_window_mode_internal(handle, "normal");
+    if let Some(w) = handle.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
 /// Change the window mode and persist the choice in app_settings.
 #[tauri::command]
 fn set_window_mode(handle: tauri::AppHandle, mode: String) -> Result<(), String> {
@@ -111,7 +132,7 @@ fn set_expanded(handle: tauri::AppHandle, expanded: bool) -> Result<(), String> 
 }
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "보이기", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "열기", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide", "숨기기", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "설정", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
@@ -122,21 +143,15 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         .tooltip("duckCalendar")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-            }
+            "show" => summon_window(app),
             "hide" => {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.hide();
                 }
             }
             "settings" => {
+                summon_window(app);
                 if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
                     let _ = w.emit("open-settings", ());
                 }
             }
@@ -144,16 +159,9 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                ..
-            } = event
-            {
-                let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
+            // Only a double-click (left button) of the tray icon summons it.
+            if let TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } = event {
+                summon_window(tray.app_handle());
             }
         })
         .build(app)?;
@@ -163,6 +171,11 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be registered first: a second launch focuses the existing window
+        // instead of opening another instance.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            summon_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -172,6 +185,12 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
             std::fs::create_dir_all(&dir).ok();
+            // Drop a schema/usage guide next to the DB so AI tools pointed at this
+            // folder can read/write events correctly. Refreshed each launch.
+            let _ = std::fs::write(
+                dir.join("DB_SCHEMA.md"),
+                include_str!("../resources/DB_SCHEMA.md"),
+            );
             let conn = db::open(dir.join("duckCalendar.db")).expect("failed to open database");
             app.manage(AppState {
                 db: Mutex::new(conn),
@@ -208,13 +227,11 @@ pub fn run() {
                 restore_window(app.handle(), &window);
                 let handle = app.handle().clone();
                 window.on_window_event(move |event| match event {
-                    // Closing the widget hides it to the tray instead of quitting.
-                    // Real exit happens via the tray menu's "종료" item.
+                    // Closing the widget docks it back to the desktop (ambient
+                    // widget) instead of quitting. Real exit is the tray's "종료".
                     WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
-                        if let Some(w) = handle.get_webview_window("main") {
-                            let _ = w.hide();
-                        }
+                        set_window_mode_internal(&handle, "desktop");
                     }
                     WindowEvent::Moved(pos) => {
                         save_window_setting(&handle, "win_x", pos.x);
