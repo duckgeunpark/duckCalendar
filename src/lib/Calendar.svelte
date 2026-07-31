@@ -202,7 +202,7 @@
   .label {
     font-weight: 600;
     text-align: center;
-    font-size: 14px;
+    font-size: 18px;
   }
   .picker-backdrop {
     position: absolute;

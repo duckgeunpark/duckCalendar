@@ -117,6 +117,16 @@
     }
   }
 
+  // ✕ = 종료가 아니라 데스크톱 위젯으로 도킹(백엔드가 close를 가로채 'desktop'
+  // 모드로 전환하고, 그때 타이틀바 버튼이 숨겨진다). 도킹 전에 설정/편집 화면을
+  // 닫아 위젯이 항상 달력 화면으로 되돌아오게 한다.
+  function dockToDesktop() {
+    showSettings = false;
+    closeEditor();
+    view = "month";
+    appWindow.close();
+  }
+
   function openNew(day?: string, hour?: number) {
     if (day) selectedDate = day;
     editorInitial = hour !== undefined ? { day, hour } : undefined;
@@ -139,7 +149,7 @@
     </button>
     <button class="ghost btn-settings" title={t("settings")} onclick={() => (showSettings = !showSettings)}>⚙</button>
     <button class="ghost btn-min" title={t("hide")} onclick={() => appWindow.hide()}>—</button>
-    <button class="ghost btn-close" title={t("close")} onclick={() => appWindow.close()}>✕</button>
+    <button class="ghost btn-close" title={t("close")} onclick={dockToDesktop}>✕</button>
   </div>
 </header>
 

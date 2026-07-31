@@ -19,6 +19,13 @@ pub struct AppState {
     pub expanded: AtomicBool,
 }
 
+fn main_window_minimized(handle: &tauri::AppHandle) -> bool {
+    handle
+        .get_webview_window("main")
+        .and_then(|w| w.is_minimized().ok())
+        .unwrap_or(false)
+}
+
 fn save_window_setting(handle: &tauri::AppHandle, key: &str, value: i32) {
     let state = handle.state::<AppState>();
     let conn = match state.db.lock() {
@@ -26,6 +33,29 @@ fn save_window_setting(handle: &tauri::AppHandle, key: &str, value: i32) {
         Err(_) => return,
     };
     let _ = settings::set(&conn, key, &value.to_string());
+}
+
+/// True when a window whose top-left corner is at (x, y) would be at least
+/// partially grabbable on some connected monitor. Guards against restoring
+/// coordinates saved while minimized (Windows parks minimized windows at
+/// -32000,-32000) or on a monitor that has since been disconnected.
+fn position_on_screen(window: &tauri::WebviewWindow, x: i32, y: i32) -> bool {
+    let Ok(monitors) = window.available_monitors() else {
+        return false;
+    };
+    let w = window
+        .outer_size()
+        .map(|s| s.width as i32)
+        .unwrap_or(360);
+    const MARGIN: i32 = 40;
+    monitors.iter().any(|m| {
+        let p = m.position();
+        let s = m.size();
+        x + w > p.x + MARGIN
+            && x < p.x + s.width as i32 - MARGIN
+            && y >= p.y - MARGIN
+            && y < p.y + s.height as i32 - MARGIN
+    })
 }
 
 fn restore_window(handle: &tauri::AppHandle, window: &tauri::WebviewWindow) {
@@ -37,12 +67,16 @@ fn restore_window(handle: &tauri::AppHandle, window: &tauri::WebviewWindow) {
     let read = |key: &str| -> Option<i32> {
         settings::get(&conn, key).ok().flatten().and_then(|v| v.parse().ok())
     };
-    if let (Some(x), Some(y)) = (read("win_x"), read("win_y")) {
-        let _ = window.set_position(PhysicalPosition::new(x, y));
-    }
+    // Ignore sizes smaller than the configured window minimum; Windows reports
+    // a bogus caption-sized rect (e.g. 113x19) for minimized windows.
     if let (Some(w), Some(h)) = (read("win_w"), read("win_h")) {
-        if w > 0 && h > 0 {
+        if w >= 320 && h >= 420 {
             let _ = window.set_size(PhysicalSize::new(w as u32, h as u32));
+        }
+    }
+    if let (Some(x), Some(y)) = (read("win_x"), read("win_y")) {
+        if position_on_screen(window, x, y) {
+            let _ = window.set_position(PhysicalPosition::new(x, y));
         }
     }
 }
@@ -90,6 +124,31 @@ fn summon_window(handle: &tauri::AppHandle) {
     }
 }
 
+/// Rescue action for a window that has drifted off-screen (monitor
+/// disconnected, saved coordinates out of range): move it — and only it, the
+/// window mode and size are left alone — to a fixed spot on the primary
+/// monitor. The Moved handler persists the new coordinates.
+fn reset_window_position(handle: &tauri::AppHandle) {
+    let Some(w) = handle.get_webview_window("main") else {
+        return;
+    };
+    // Must be visible/restored first: a minimized window ignores set_position
+    // on Windows, and moving a hidden window would not help the user find it.
+    let _ = w.show();
+    let _ = w.unminimize();
+
+    let Ok(Some(monitor)) = w.primary_monitor() else {
+        return;
+    };
+    let mp = monitor.position();
+    let ms = monitor.size();
+    let size = w.outer_size().unwrap_or(PhysicalSize::new(360, 480));
+    let x = mp.x + (ms.width as i32 - size.width as i32).max(0) / 2;
+    let y = mp.y + (ms.height as i32 - size.height as i32).max(0) / 2;
+    let _ = w.set_position(PhysicalPosition::new(x, y));
+    let _ = w.set_focus();
+}
+
 /// Change the window mode and persist the choice in app_settings.
 #[tauri::command]
 fn set_window_mode(handle: tauri::AppHandle, mode: String) -> Result<(), String> {
@@ -134,9 +193,10 @@ fn set_expanded(handle: tauri::AppHandle, expanded: bool) -> Result<(), String> 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "열기", true, None::<&str>)?;
     let hide = MenuItem::with_id(app, "hide", "숨기기", true, None::<&str>)?;
+    let reset_pos = MenuItem::with_id(app, "reset_pos", "새로고침", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "설정", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &hide, &settings, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &hide, &reset_pos, &settings, &quit])?;
 
     TrayIconBuilder::with_id("main-tray")
         .icon(app.default_window_icon().unwrap().clone())
@@ -149,6 +209,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                     let _ = w.hide();
                 }
             }
+            "reset_pos" => reset_window_position(app),
             "settings" => {
                 summon_window(app);
                 if let Some(w) = app.get_webview_window("main") {
@@ -287,11 +348,21 @@ pub fn run() {
                         api.prevent_close();
                         set_window_mode_internal(&handle, "desktop");
                     }
+                    // Skip persisting geometry while minimized: Windows parks
+                    // minimized windows at -32000,-32000 with a caption-sized
+                    // rect, and restoring those coordinates on the next launch
+                    // would place the window unreachably off-screen.
                     WindowEvent::Moved(pos) => {
+                        if pos.x <= -30000 || pos.y <= -30000 || main_window_minimized(&handle) {
+                            return;
+                        }
                         save_window_setting(&handle, "win_x", pos.x);
                         save_window_setting(&handle, "win_y", pos.y);
                     }
                     WindowEvent::Resized(size) => {
+                        if main_window_minimized(&handle) {
+                            return;
+                        }
                         if !handle.state::<AppState>().expanded.load(Ordering::SeqCst) {
                             save_window_setting(&handle, "win_w", size.width as i32);
                             save_window_setting(&handle, "win_h", size.height as i32);
